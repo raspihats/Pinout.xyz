@@ -5,7 +5,7 @@ class: board
 type: relay
 formfactor: Custom
 manufacturer: Raspihats
-description: 10 relay outputs with configurable power-on and watchdog safety states, stackable over I2C
+description: Relay module with 10 PWM-driven relays, watchdog-backed safety and power-on states and CiA 401-aligned firmware
 url: https://raspihats.com/shop/dq10rly-i2c-hat/
 github: https://github.com/raspihats/raspihats
 buy: https://raspihats.com/shop/dq10rly-i2c-hat/
@@ -36,23 +36,38 @@ i2c:
 -->
 # DQ10rly I2C-HAT
 
-The DQ10rly I2C-HAT adds 10 power relays to the Raspberry Pi, controlled over I2C, so it uses no GPIO pins beyond SDA and SCL. Each relay is a Form A (normally open) contact rated 5A @ 250VAC/30VDC, wired to detachable screw terminals, with an LED showing its state.
+The DQ10rly I2C-HAT is a 10-channel relay output module for the Raspberry Pi, designed for control cabinets and unattended installations. It is not a GPIO expander driving relays: an on-board microcontroller runs the outputs, enforces their configured states and talks to the Pi over a CRC-protected I2C protocol, using only SDA and SCL.
 
-An onboard microcontroller drives the relay coils. After pull-in it holds them with PWM, which cuts average coil power by up to 75% and keeps a stack of boards within the Pi's 5V budget. The relay state applied at power-up (PowerOnValue) is stored on the board, so relays don't flicker while the Pi boots. If the host stops talking to the board for longer than the communication watchdog period, the outputs switch to a stored SafetyValue.
+## Defined relay states, from power-up to failure
 
-Up to 16 boards can share one Raspberry Pi: four address jumpers select an I2C address from 0x50 to 0x5F. Raspihats relay boards share this range, so give each one a unique address when mixing them.
+Every relay has a defined state at every stage, stored on the board and enforced by its own firmware rather than by the host:
 
-## Features
+* **Power-up:** the PowerOnValue is applied within milliseconds of power-up, long before Linux has booted, so no relay moves unexpectedly while the Pi starts.
+* **Host failure:** if the Pi stops communicating (application crash, kernel hang, bus fault) for longer than the communication watchdog period, each relay goes to its SafetyValue or holds its last state, selected per channel with the SafetyMask.
+* **Firmware supervision:** an independent system watchdog supervises the board's own microcontroller.
 
-* 10 relays, Form A (normally open), 5A @ 250VAC/30VDC
-* PWM coil drive, up to 75% lower average power
-* Configurable PowerOnValue and SafetyValue, stored on the board
-* System and communication watchdogs
+## PWM coil drive
+
+After pull-in, each relay coil is held by a PWM drive, cutting average coil power by up to 75%. This is what keeps a full stack of 16 boards within the budget of the official Raspberry Pi power supply.
+
+## Firmware aligned with CiA 301 and CiA 401
+
+The firmware follows the CANopen device model: its configuration objects are aligned with CiA 301 and its output objects with CiA 401, the profile for generic I/O modules.
+
+* Output polarity, per-channel safety mask and bulk-write mask
+* Restore factory defaults and a configuration signature that confirms, in a single read, that the stored configuration is still exactly as commissioned
+* CRC-16 protected I2C frames, echoed writes and automatic retries
+* Status word reporting power-on, reset and watchdog events
+* Firmware updates in place over I2C: no jumper, no removal from the panel
+
+## Specifications
+
+* 10 relays, Form A (normally open), 5A @ 250VAC/30VDC, LED indicator per channel
+* Detachable screw terminals
 * 2000 VAC isolation
-* LED indicator on every relay
 * Operating temperature -25 to +75°C
-* Stackable, up to 16 boards (I2C addresses 0x50 to 0x5F)
-* Mounts on a DIN rail with the [DIN Pi Case](https://raspihats.com/shop/din-pi-case/)
+* Stackable up to 16 boards, I2C addresses 0x50 to 0x5F (shared by the Raspihats relay boards, so give each one a unique address)
+* DIN rail mounting with the [DIN Pi Case](https://raspihats.com/shop/din-pi-case/)
 
 ## Example
 
@@ -60,14 +75,15 @@ Up to 16 boards can share one Raspberry Pi: four address jumpers select an I2C a
 from raspihats.i2c_hats import DQ10rly
 
 hat = DQ10rly(address=0x50)
-hat.do.power_on_value = 0x00  # all off at power-up
-hat.do.safety_value = 0x00    # all off if the watchdog fires
-hat.do.channels[0] = True     # energize relay 0
+hat.dq.power_on_value = 0x00  # all open at power-up
+hat.dq.safety_value = 0x00    # all open on watchdog trip
+hat.cwdt.period = 1.0         # watchdog period, seconds
+hat.dq.channels[0] = True     # energize relay 0
 ```
 
 ## Software
 
-* [Python](https://pypi.org/project/raspihats/) - `pip install raspihats`
+* [Python](https://pypi.org/project/raspihats/) - `pip install raspihats`, full API reference in the [README](https://github.com/raspihats/raspihats#readme)
 * [Node.js](https://www.npmjs.com/package/raspihats)
 * [Node-RED](https://www.npmjs.com/package/node-red-contrib-raspihats) - flow-based programming
 * [Robot Framework](https://github.com/raspihats/raspihats/blob/master/raspihats/i2c_hats/robot.py) - keyword library for test automation

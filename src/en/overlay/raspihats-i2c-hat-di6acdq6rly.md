@@ -5,7 +5,7 @@ class: board
 type: io, relay
 formfactor: Custom
 manufacturer: Raspihats
-description: 6 isolated digital inputs with edge counters and 6 relay outputs, stackable over I2C
+description: I/O module with 6 isolated inputs and 6 PWM-driven relays, watchdog-backed safety states and CiA 401-aligned firmware
 url: https://raspihats.com/shop/di6acdq6rly-i2c-hat/
 github: https://github.com/raspihats/raspihats
 buy: https://raspihats.com/shop/di6acdq6rly-i2c-hat/
@@ -40,27 +40,51 @@ i2c:
 -->
 # DI6acDQ6rly I2C-HAT
 
-The DI6acDQ6rly I2C-HAT combines 6 opto-isolated digital inputs and 6 power relays on one Raspberry Pi add-on board, controlled over I2C. Each input works with sink or source wiring and switches on anywhere from +3V to +30V, and each relay is a Form A (normally open) contact rated 5A @ 250VAC/30VDC. Every input and relay has an LED indicator.
+The DI6acDQ6rly I2C-HAT is a combined I/O module for the Raspberry Pi with 6 isolated digital inputs and 6 power relays, designed for control cabinets and unattended installations. It is not a GPIO expander: an on-board microcontroller filters and counts the inputs, runs the relays, enforces their configured states and talks to the Pi over a CRC-protected I2C protocol.
 
-An onboard microcontroller debounces the inputs and keeps two 32-bit counters per input, one for rising and one for falling edges, so pulses are counted on the board even while the Pi is busy. It also drives the relay coils, holding them with PWM after pull-in to cut average coil power by up to 75%. The relay state applied at power-up (PowerOnValue) is stored on the board, and if the host stops talking to the board for longer than the communication watchdog period, the relays switch to a stored SafetyValue.
+Each input accepts sink or source wiring and switches on from +3V to +30V, behind 2000 VAC isolation. Each relay is a Form A (normally open) contact rated 5A @ 250VAC/30VDC.
 
-The IRQ pin is an open-drain, active-low interrupt that the board pulls when an input selected for interrupts changes, so the Pi doesn't have to poll. Enable the Pi's internal pull-up on GPIO21 to use it. The IRQ line can be moved to another GPIO with solder jumpers.
+## Defined relay states, from power-up to failure
 
-Up to 16 boards can share one Raspberry Pi: four address jumpers select an I2C address from 0x60 to 0x6F.
+Every relay has a defined state at every stage, stored on the board and enforced by its own firmware rather than by the host:
 
-## Features
+* **Power-up:** the PowerOnValue is applied within milliseconds of power-up, long before Linux has booted, so no relay moves unexpectedly while the Pi starts.
+* **Host failure:** if the Pi stops communicating (application crash, kernel hang, bus fault) for longer than the communication watchdog period, each relay goes to its SafetyValue or holds its last state, selected per channel with the SafetyMask.
+* **Firmware supervision:** an independent system watchdog supervises the board's own microcontroller.
 
-* 6 opto-isolated digital inputs, sink or source, on from +3V to +30V
-* Two 32-bit edge counters per input (rising and falling), up to 100Hz, minimum pulse width 5ms
-* Interrupt output on input change
+## PWM coil drive
+
+After pull-in, each relay coil is held by a PWM drive, cutting average coil power by up to 75%. This is what keeps a full stack of 16 boards within the budget of the official Raspberry Pi power supply.
+
+## Signal processing on the inputs
+
+* **Filtering:** per-channel digital filter from 1 to 65535 ms and per-channel polarity inversion
+* **Counting:** two 32-bit counters per channel, rising and falling edges, up to 100 Hz; pulses keep being counted while the host is busy or its application restarts
+* **Interrupts:** per-channel rising and falling edge masks and a capture queue that records each change together with a snapshot of all input states, so no event is lost between reads. The IRQ line stays asserted while captures are pending, and the engine is armed and disarmed in a single write
+
+The interrupt line is open-drain and active-low: enable the Pi's pull-up on GPIO21 to use it. GPIO21 is connected by default; GPIO20, GPIO22 or GPIO23 can be selected with solder jumpers instead.
+
+## Firmware aligned with CiA 301 and CiA 401
+
+The firmware follows the CANopen device model: its configuration objects are aligned with CiA 301 and its I/O objects with CiA 401, the profile for generic I/O modules.
+
+* Output polarity, per-channel safety mask and bulk-write mask
+* When the communication watchdog trips, the interrupt engine is also disarmed: pending captures are cleared and the IRQ line is released, so a restarted application starts from a clean state instead of acting on stale events
+* Restore factory defaults and a configuration signature that confirms, in a single read, that the stored configuration is still exactly as commissioned
+* CRC-16 protected I2C frames, echoed writes and automatic retries
+* Status word reporting power-on, reset and watchdog events
+* Firmware updates in place over I2C: no jumper, no removal from the panel
+
+## Specifications
+
+* 6 isolated inputs, sink or source, on from +3V to +30V
 * 6 relays, Form A (normally open), 5A @ 250VAC/30VDC
-* PWM coil drive, up to 75% lower average power
-* Configurable PowerOnValue and SafetyValue, stored on the board
-* System and communication watchdogs
+* LED indicator on every input and relay
+* Detachable screw terminals
 * 2000 VAC isolation
 * Operating temperature -25 to +75°C
-* Stackable, up to 16 boards (I2C addresses 0x60 to 0x6F)
-* Mounts on a DIN rail with the [DIN Pi Case](https://raspihats.com/shop/din-pi-case/)
+* Stackable up to 16 boards, I2C addresses 0x60 to 0x6F
+* DIN rail mounting with the [DIN Pi Case](https://raspihats.com/shop/din-pi-case/)
 
 ## Example
 
@@ -68,15 +92,16 @@ Up to 16 boards can share one Raspberry Pi: four address jumpers select an I2C a
 from raspihats.i2c_hats import DI6acDQ6rly
 
 hat = DI6acDQ6rly(address=0x60)
-print(hat.di.value)            # all 6 inputs as a bitmask
-print(hat.di.r_counters[0])    # rising edges on input 0
-hat.do.power_on_value = 0x00   # all off at power-up
-hat.do.channels[0] = True      # energize relay 0
+hat.dq.power_on_value = 0x00  # all open at power-up
+hat.dq.safety_value = 0x00    # all open on watchdog trip
+hat.cwdt.period = 1.0         # watchdog period, seconds
+print(hat.di.value)           # all 6 inputs as a bitmask
+hat.dq.channels[0] = True     # energize relay 0
 ```
 
 ## Software
 
-* [Python](https://pypi.org/project/raspihats/) - `pip install raspihats`
+* [Python](https://pypi.org/project/raspihats/) - `pip install raspihats`, full API reference in the [README](https://github.com/raspihats/raspihats#readme)
 * [Node.js](https://www.npmjs.com/package/raspihats)
 * [Node-RED](https://www.npmjs.com/package/node-red-contrib-raspihats) - flow-based programming
 * [Robot Framework](https://github.com/raspihats/raspihats/blob/master/raspihats/i2c_hats/robot.py) - keyword library for test automation
