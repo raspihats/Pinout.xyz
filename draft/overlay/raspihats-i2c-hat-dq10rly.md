@@ -67,7 +67,7 @@ The firmware follows the CANopen device model: its configuration objects are ali
 * 2000 VAC isolation
 * Operating temperature -25 to +75°C
 * Stackable up to 16 boards, I2C addresses 0x50 to 0x5F (shared by the Raspihats relay boards, so give each one a unique address)
-* DIN rail mounting with the [DIN Pi Case](https://raspihats.com/shop/din-pi-case/)
+* DIN rail mounting with a [DIN Pi Case Extension](https://raspihats.com/shop/din-pi-case-extension/), one per HAT, stacked on the [DIN Pi Case](https://raspihats.com/shop/din-pi-case/) that holds the Raspberry Pi
 
 ## Example
 
